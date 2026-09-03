@@ -62,6 +62,17 @@ function rawRequest(port, { method = 'GET', path: reqPath = '/', headers = {} } 
 }
 
 describe('serve-question', () => {
+  it('rejects path traversal in detached question keys', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'serve-question-'));
+    assert.throws(
+      () => execSync(
+        `${JSON.stringify(process.execPath)} ${JSON.stringify(SCRIPT)} --wait --key ../outside`,
+        { cwd: dir, encoding: 'utf8', stdio: 'pipe' },
+      ),
+      (error) => error.status === 1 && /--key must contain only/.test(error.stderr),
+    );
+  });
+
   it('opens Windows URLs through cmd.exe and reserves the start title argument', () => {
     assert.deepEqual(
       browserOpenCommand('http://127.0.0.1:1234/', { platform: 'win32', comspec: 'cmd.exe' }),

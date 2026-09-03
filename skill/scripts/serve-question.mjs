@@ -110,6 +110,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { openSystemBrowser } from './lib/open-system-browser.mjs';
 
@@ -120,6 +121,24 @@ function arg(name, fallback = null) {
   return v && !v.startsWith('--') ? v : fallback;
 }
 const hasFlag = (name) => process.argv.includes(`--${name}`);
+
+function questionKey(required = false) {
+  const key = arg('key');
+  if (!key) {
+    if (required) {
+      console.error('serve-question: this mode needs --key');
+      process.exit(1);
+    }
+    return null;
+  }
+  // Keys are both bearer secrets and file-name components. Keep them opaque
+  // and path-safe so an argument can never address files outside QUESTION_DIR.
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(key)) {
+    console.error('serve-question: --key must contain only letters, numbers, underscores, or hyphens');
+    process.exit(1);
+  }
+  return key;
+}
 
 if (process.env.IMPECCABLE_QUESTION_DISABLED) {
   console.log('serve-question: disabled in this session (no browser); use the structured question tool instead.');
@@ -230,8 +249,7 @@ if (hasFlag('schema')) {
 }
 
 if (hasFlag('wait')) {
-  const key = arg('key');
-  if (!key) { console.error('serve-question: --wait needs --key'); process.exit(1); }
+  const key = questionKey(true);
   const pollSec = Number(arg('poll', '60'));
   const deadline = Date.now() + pollSec * 1000;
   const answered = () => fs.existsSync(answerFile(key));
@@ -302,8 +320,7 @@ if (hasFlag('wait')) {
 }
 
 if (hasFlag('stop')) {
-  const key = arg('key');
-  if (!key) { console.error('serve-question: --stop needs --key'); process.exit(1); }
+  const key = questionKey(true);
   try { process.kill(JSON.parse(fs.readFileSync(stateFile(key), 'utf8')).pid); } catch { /* dead already */ }
   try { fs.rmSync(answerFile(key)); } catch {}
   try { fs.rmSync(stateFile(key)); } catch {}
@@ -312,8 +329,8 @@ if (hasFlag('stop')) {
 }
 
 if (hasFlag('update')) {
-  const key = arg('key');
-  if (!key || !payloadPath) { console.error('serve-question: --update needs --key and --payload'); process.exit(1); }
+  const key = questionKey(true);
+  if (!payloadPath) { console.error('serve-question: --update needs --key and --payload'); process.exit(1); }
   // A hand the server cannot load must fail here, at the sender: delivered
   // anyway, the page would see ready:true for a round that never renders.
   const nextRound = JSON.parse(fs.readFileSync(payloadPath, 'utf8'));
@@ -349,7 +366,7 @@ if (hasFlag('start')) {
   if (!payloadPath) { console.error('serve-question: --start needs --payload <file>'); process.exit(1); }
   JSON.parse(fs.readFileSync(payloadPath, 'utf8'));
   fs.mkdirSync(QUESTION_DIR, { recursive: true });
-  const key = arg('key') || Math.random().toString(16).slice(2, 10);
+  const key = questionKey() || randomBytes(16).toString('hex');
   // In start mode the agent is alive and owns browser routing; the server
   // only opens the system browser itself when --open forces it.
   // The daemon's output lands in a per-key log so a startup failure can say
@@ -457,7 +474,7 @@ function loadRound(json) {
   awaitingNext = false;
 }
 try { loadRound(raw); } catch (error) { console.error(`serve-question: ${error.message}`); process.exit(1); }
-const detachedKey = hasFlag('detached-serve') ? arg('key') : null;
+const detachedKey = hasFlag('detached-serve') ? questionKey(true) : null;
 const nextFile = () => detachedKey ? path.join(QUESTION_DIR, `${detachedKey}.next.json`) : null;
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -1738,7 +1755,7 @@ server.listen(portArg, '127.0.0.1', () => {
   const url = `http://127.0.0.1:${port}/`;
   if (hasFlag('detached-serve')) {
     fs.mkdirSync(QUESTION_DIR, { recursive: true });
-    fs.writeFileSync(stateFile(arg('key')), JSON.stringify({ pid: process.pid, port, url }));
+    fs.writeFileSync(stateFile(detachedKey), JSON.stringify({ pid: process.pid, port, url }));
   } else {
     console.log(`QUESTION URL: ${url}`);
     console.log('Waiting for the user to choose in the browser (Ctrl-C aborts)...');
